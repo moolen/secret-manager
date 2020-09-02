@@ -3,7 +3,6 @@ SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := all
 
-IMG ?= itscontained/secret-manager
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -22,10 +21,14 @@ LDFLAGS += -X github.com/itscontained/secret-manager/pkg/util.version=${BINARY_V
 LDFLAGS += -X github.com/itscontained/secret-manager/pkg/util.gitCommit=${GIT_COMMIT}
 LDFLAGS += -X github.com/itscontained/secret-manager/pkg/util.gitState=${GIT_DIRTY}
 
+IMG_TAG ?= ${GIT_TAG}
+IMG ?= itscontained/secret-manager:${IMG_TAG}
+
 all: docker-build
 
 fmt: lint/check ## ensure consistent code style
 	go run oss.indeed.com/go/go-groups -w .
+	gofmt -s -w .
 	golangci-lint run --fix > /dev/null 2>&1 || true
 
 lint/check:
@@ -42,7 +45,7 @@ lint-install: ## installs golangci-lint to the go bin dir
 
 lint: lint/check ## run golangci-lint
 	golangci-lint run
-	@if [ -n "$$(go run oss.indeed.com/go/go-groups -d .)" ]; then \
+	if [ -n "$$(gofmt -s -l .)" ] || [ -n "$$(go run oss.indeed.com/go/go-groups -d .)" ]; then \
 		echo -e "\033[0;33mdetected fmt problems: run \`\033[0;32mmake fmt\033[0m\033[0;33m\`\033[0m"; \
 		exit 1; \
 	fi
