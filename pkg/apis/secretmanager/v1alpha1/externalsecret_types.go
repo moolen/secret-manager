@@ -35,20 +35,20 @@ type ExternalSecretSpec struct {
 	// of the ExternalSecret. If not set the secret will only be synced on
 	// creation of the ExternalSecret.
 	// +kubebuilder:validation:Format=duration
-	// +optional
+	// +kubebuilder:validation:Optional
 	RenewAfter *metav1.Duration `json:"renewAfter,omitempty"`
 
 	// Template which will be deep merged into the generated secret.
 	// Can be used to set for example annotations or type on the generated secret.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Template *JSON `json:"template,omitempty"`
 
 	// Data is a list of references to secret values.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Data []KeyReference `json:"data,omitempty"`
 
 	// DataFrom references a map of secrets to embed within the generated secret.
-	// +optional
+	// +kubebuilder:validation:Optional
 	DataFrom []RemoteReference `json:"dataFrom,omitempty"`
 }
 
@@ -65,11 +65,11 @@ type ObjectReference struct {
 	Name string `json:"name"`
 
 	// Kind of the resource being referred to.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Kind string `json:"kind,omitempty"`
 
 	// Group of the resource being referred to.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Group string `json:"group,omitempty"`
 }
 
@@ -88,12 +88,12 @@ type RemoteReference struct {
 	// Property to extract secret value at path in the SecretStore.
 	// Can be omitted if not supported by SecretStore or if entire secret should
 	// be fetched as in dataFrom reference.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Property *string `json:"property,omitempty"`
 
 	// Version of the secret to fetch from the SecretStore. Must be a supported paramater
 	// by the referenced SecretStore.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Version *string `json:"version,omitempty"`
 }
 
@@ -106,7 +106,7 @@ type ExternalSecretStatus struct {
 	// RenewalTime is the time at which the secret values will be next
 	// renewed.
 	// If not set, no upcoming renewal is scheduled.
-	// +optional
+	// +kubebuilder:validation:Optional
 	RenewalTime *metav1.Time `json:"renewalTime,omitempty"`
 }
 

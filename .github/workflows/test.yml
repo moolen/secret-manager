@@ -1,0 +1,48 @@
+name: Run Tests
+
+on:
+  push:
+    branches:
+    - master
+  pull_request:
+
+jobs:
+
+  test:
+
+    name: Test
+    runs-on: ubuntu-18.04
+    steps:
+
+    - name: Set up Go 1.15
+      uses: actions/setup-go@v1
+      with:
+        go-version: 1.15
+      id: go
+    - name: Install kubebuilder
+      run: bash hack/install_kubebuilder.sh
+      env:
+        KUBEBUILDER_ASSETS: $HOME/kubebuilder
+
+    - name: Install make
+      run: sudo apt-get install -y make
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v1
+
+    - name: Test
+      run: |
+        make lint-install
+        make test
+      env:
+        KUBEBUILDER_ASSETS: $HOME/kubebuilder
+
+    - name: Build and push Docker images to quay
+      uses: docker/build-push-action@v1
+      with:
+        username: ${{ secrets.QUAY_USERNAME }}
+        password: ${{ secrets.QUAY_PASSWORD }}
+        repository: moolen/secret-manager
+        registry: quay.io
+        tag_with_ref: true
+        tag_with_sha: true

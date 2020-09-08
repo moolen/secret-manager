@@ -24,12 +24,14 @@ import (
 
 	smmeta "github.com/itscontained/secret-manager/pkg/apis/meta/v1"
 	smv1alpha1 "github.com/itscontained/secret-manager/pkg/apis/secretmanager/v1alpha1"
+	"github.com/itscontained/secret-manager/pkg/internal/scheduler"
 	"github.com/itscontained/secret-manager/pkg/internal/store"
 	storebase "github.com/itscontained/secret-manager/pkg/internal/store/base"
 	"github.com/itscontained/secret-manager/pkg/util/merge"
 
 	corev1 "k8s.io/api/core/v1"
 
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -42,20 +44,23 @@ import (
 )
 
 const (
-	ownerKey     = ".metadata.controller"
-	requeueAfter = time.Second * 30
+	ownerKey = ".metadata.controller"
 
-	errStoreNotFound       = "cannot get store reference"
-	errStoreSetupFailed    = "cannot setup store client"
-	errGetSecretDataFailed = "cannot get ExternalSecret data from store"
+	// requeueAfter = time.Second * 30
+
+	errStoreNotFound          = "cannot get store reference"
+	errStoreSetupFailed       = "cannot setup store client"
+	errGetSecretDataFailed    = "cannot get ExternalSecret data from store"
+	errUpdateSecretDataFailed = "cannot create/update ExternalSecret data from store"
 )
 
 // ExternalSecretReconciler reconciles a ExternalSecret object
 type ExternalSecretReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
-	Clock  clock.Clock
+	Log       logr.Logger
+	Scheme    *runtime.Scheme
+	Clock     clock.Clock
+	Scheduler *scheduler.Scheduler
 
 	storeFactory store.Factory
 }
@@ -64,54 +69,89 @@ func (r *ExternalSecretReconciler) Reconcile(req ctrl.Request) (ctrl.Result, err
 	ctx := context.Background()
 	log := r.Log.WithValues("externalsecret", req.NamespacedName)
 
+	log.V(2).Info("reconciling ExternalSecret")
 	extSecret := &smv1alpha1.ExternalSecret{}
 	if err := r.Get(ctx, req.NamespacedName, extSecret); err != nil {
+		if apierrs.IsNotFound(err) {
+			log.Info("deleting object")
+			r.Scheduler.Remove(req.NamespacedName)
+			return ctrl.Result{}, nil
+		}
 		log.Error(err, "unable to get ExternalSecret")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      extSecret.Name,
-			Namespace: extSecret.Namespace,
-		},
+	// recon func used by scheduler
+	fn := func() error {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      extSecret.Name,
+				Namespace: extSecret.Namespace,
+			},
+		}
+
+		// TODO: frontend specific strategy
+		result, err := ctrl.CreateOrUpdate(ctx, r.Client, secret, func() error {
+			store, err := r.getStore(ctx, extSecret)
+			if err != nil {
+				return fmt.Errorf("%s: %w", errStoreNotFound, err)
+			}
+
+			storeClient, err := r.storeFactory.New(ctx, store, r.Client, req.Namespace)
+			if err != nil {
+				return fmt.Errorf("%s: %w", errStoreSetupFailed, err)
+			}
+
+			secret.ObjectMeta.Labels = extSecret.Labels
+			secret.ObjectMeta.Annotations = extSecret.Annotations
+			err = controllerutil.SetControllerReference(extSecret, &secret.ObjectMeta, r.Scheme)
+			if err != nil {
+				return fmt.Errorf("failed to set ExternalSecret controller reference: %w", err)
+			}
+			secret.Data, err = r.getSecret(ctx, storeClient, extSecret)
+			if err != nil {
+				return fmt.Errorf("%s: %w", errGetSecretDataFailed, err)
+			}
+			return nil
+		})
+		if err != nil {
+			log.Error(err, "error while reconciling ExternalSecret", "namespace", extSecret.Namespace, "name", extSecret.Name)
+			extSecret.Status.SetConditions(smmeta.Unavailable().WithMessage(err.Error()))
+			if extSecret.Spec.RenewAfter != nil {
+				extSecret.Status.RenewalTime = &metav1.Time{Time: time.Now().Add(extSecret.Spec.RenewAfter.Duration)}
+			}
+			_ = r.Status().Update(ctx, extSecret)
+			return fmt.Errorf("%s: %w", errUpdateSecretDataFailed, err)
+		}
+		log.Info("successfully reconcile ExternalSecret", "operation", result)
+		extSecret.Status.SetConditions(smmeta.Available())
+		if extSecret.Spec.RenewAfter != nil {
+			extSecret.Status.RenewalTime = &metav1.Time{Time: time.Now().Add(extSecret.Spec.RenewAfter.Duration)}
+		}
+		_ = r.Status().Update(ctx, extSecret)
+		return nil
 	}
 
-	result, err := ctrl.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		store, err := r.getStore(ctx, extSecret)
-		if err != nil {
-			return fmt.Errorf("%s: %w", errStoreNotFound, err)
-		}
+	if extSecret.Spec.RenewAfter != nil {
+		log.Info("adding to schedule", "namespace", extSecret.Namespace, "name", extSecret.Name)
+		r.Scheduler.Add(extSecret, fn)
+	}
 
-		storeClient, err := r.storeFactory.New(ctx, store, r.Client, req.Namespace)
-		if err != nil {
-			return fmt.Errorf("%s: %w", errStoreSetupFailed, err)
-		}
-
-		secret.ObjectMeta.Labels = extSecret.Labels
-		secret.ObjectMeta.Annotations = extSecret.Annotations
-		err = controllerutil.SetControllerReference(extSecret, &secret.ObjectMeta, r.Scheme)
-		if err != nil {
-			return fmt.Errorf("failed to set ExternalSecret controller reference: %w", err)
-		}
-
-		secret.Data, err = r.getSecret(ctx, storeClient, extSecret)
-		if err != nil {
-			return fmt.Errorf("%s: %w", errGetSecretDataFailed, err)
-		}
-
-		return nil
-	})
-
+	err := fn()
 	if err != nil {
 		log.Error(err, "error while reconciling ExternalSecret")
 		extSecret.Status.SetConditions(smmeta.Unavailable().WithMessage(err.Error()))
+		if extSecret.Spec.RenewAfter != nil {
+			extSecret.Status.RenewalTime = &metav1.Time{Time: time.Now().Add(extSecret.Spec.RenewAfter.Duration)}
+		}
 		_ = r.Status().Update(ctx, extSecret)
-		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		return ctrl.Result{}, nil
 	}
 
-	log.Info("successfully reconcile ExternalSecret", "operation", result)
 	extSecret.Status.SetConditions(smmeta.Available())
+	if extSecret.Spec.RenewAfter != nil {
+		extSecret.Status.RenewalTime = &metav1.Time{Time: time.Now().Add(extSecret.Spec.RenewAfter.Duration)}
+	}
 	_ = r.Status().Update(ctx, extSecret)
 	return ctrl.Result{}, nil
 }
@@ -123,6 +163,10 @@ func (r *ExternalSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	if r.storeFactory == nil {
 		r.storeFactory = &storebase.Default{}
+	}
+
+	if r.Scheduler == nil {
+		r.Scheduler = scheduler.New(r.storeFactory, r, r.Log)
 	}
 
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &corev1.Secret{}, ownerKey, func(rawObj runtime.Object) []string {

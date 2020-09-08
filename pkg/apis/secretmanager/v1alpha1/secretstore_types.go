@@ -20,11 +20,65 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// SecretStoreSpec holds the configuration for a single secret store
+// +kubebuilder:validation:MinProperties=1
+// +kubebuilder:validation:MaxProperties=1
 type SecretStoreSpec struct {
 	// Vault configures this store to sync secrets using a HashiCorp Vault
 	// KV backend.
-	// +optional
+	// +kubebuilder:validation:Optional
 	Vault *VaultStore `json:"vault,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	AWSSecretManager *AWSSecretManagerStore `json:"AWSSecretManager,omitempty"`
+	// +kubebuilder:validation:Optional
+	AWSParameterStore *AWSParameterStoreStore `json:"AWSParameterStore,omitempty"`
+}
+
+// AWSSecretManagerStore is a store for AWS Secrets Manager
+type AWSSecretManagerStore struct {
+	// +kubebuilder:validation:Optional
+	Region string `json:"region,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	Role string `json:"role,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	Secret string `json:"secret,omitempty"`
+
+	// Credentials must have accessKeyID and secretAccessKey
+	// to allow secret-manager to access the API
+	// +kubebuilder:validation:Optional
+	Credentials CredentialsRef `json:"credentials,omitempty"`
+}
+
+// AWSParameterStoreStore is a store for AWS Seure Systems Manager Parameter Store
+type AWSParameterStoreStore struct {
+	// +kubebuilder:validation:Optional
+	Region string `json:"region,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	Role string `json:"role,omitempty"`
+
+	Parameter string `json:"parameter"`
+
+	// Credentials must have accessKeyID and secretAccessKey
+	// to allow secret-manager to access the API
+	// +kubebuilder:validation:Optional
+	Credentials CredentialsRef `json:"credentials,omitempty"`
+}
+
+// CredentialsRef references credentials for a backend
+type CredentialsRef struct {
+	SecretRef *SecretRef `json:"secretRef"`
+	// TODO: consider adding configMapRef
+}
+
+// SecretRef is a reference to a secret
+// the secret must have specific keys depending on the backend
+type SecretRef struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 // Configures an store to sync secrets using a HashiCorp Vault

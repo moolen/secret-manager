@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	smmeta "github.com/itscontained/secret-manager/pkg/apis/meta/v1"
 	sm1valpha1 "github.com/itscontained/secret-manager/pkg/apis/secretmanager/v1alpha1"
@@ -40,10 +41,13 @@ import (
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
-var cfg *rest.Config
-var k8sClient client.Client
-var testEnv *envtest.Environment
-var storeFactory *fakestore.Factory
+var (
+	cfg          *rest.Config
+	k8sClient    client.Client
+	testEnv      *envtest.Environment
+	storeFactory *fakestore.Factory
+	stop         = make(chan struct{})
+)
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -71,12 +75,16 @@ var _ = BeforeSuite(func(done Done) {
 	err = smmeta.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	t := time.Second
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme: scheme.Scheme,
+		SyncPeriod: &t,
+		Scheme:     scheme.Scheme,
 	})
 	Expect(err).ToNot(HaveOccurred())
 
-	k8sClient = k8sManager.GetClient()
+	// do not use mgr.GetClient() (its using a cache)
+	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	Expect(err).ToNot(HaveOccurred())
 	Expect(k8sClient).ToNot(BeNil())
 
 	storeFactory = fakestore.New()
@@ -89,9 +97,13 @@ var _ = BeforeSuite(func(done Done) {
 	Expect(err).ToNot(HaveOccurred())
 
 	go func() {
+		<-ctrl.SetupSignalHandler()
+		close(stop)
+	}()
+
+	go func() {
 		defer GinkgoRecover()
-		err = k8sManager.Start(ctrl.SetupSignalHandler())
-		Expect(err).ToNot(HaveOccurred())
+		Expect(k8sManager.Start(stop)).ToNot(HaveOccurred())
 	}()
 
 	close(done)
@@ -99,6 +111,7 @@ var _ = BeforeSuite(func(done Done) {
 
 var _ = AfterSuite(func() {
 	By("Tearing down the test environment")
+	close(stop)
 	err := testEnv.Stop()
 	Expect(err).ToNot(HaveOccurred())
 })

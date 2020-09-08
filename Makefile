@@ -51,7 +51,7 @@ lint: lint/check ## run golangci-lint
 	fi
 
 test: lint ## Run tests
-	go test ./... -coverprofile cover.out
+	go test ./... -coverprofile cover.out -race
 
 build: generate ## Build manager binary
 	CGO_ENABLED=0 go build -a -ldflags '$(LDFLAGS)' -o bin/manager ./cmd/controller/main.go
