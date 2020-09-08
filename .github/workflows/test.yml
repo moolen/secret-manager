@@ -28,18 +28,12 @@ jobs:
 
     - name: Install kubebuilder
       run: |
-        echo $HOME
-        pwd
         bash hack/install_kubebuilder.sh
-      env:
-        KUBEBUILDER_ASSETS: $HOME/kubebuilder
 
     - name: Test
       run: |
         make lint-install
         make test
-      env:
-        KUBEBUILDER_ASSETS: $HOME/kubebuilder
 
     - name: Build and push Docker images to quay
       uses: docker/build-push-action@v1

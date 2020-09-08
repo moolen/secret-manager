@@ -24,6 +24,8 @@ LDFLAGS += -X github.com/itscontained/secret-manager/pkg/util.gitState=${GIT_DIR
 IMG_TAG ?= ${GIT_TAG}
 IMG ?= itscontained/secret-manager:${IMG_TAG}
 
+export KUBEBUILDER_ASSETS=${HOME}/kubebuilder/bin
+
 all: docker-build
 
 fmt: lint/check ## ensure consistent code style
