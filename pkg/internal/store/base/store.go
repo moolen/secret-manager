@@ -45,6 +45,5 @@ func (f *Default) New(ctx context.Context, store smv1alpha1.GenericStore, kubeCl
 		}
 		return awsClient, nil
 	}
-
 	return nil, fmt.Errorf("SecretStore %q does not have a valid client", store.GetName())
 }

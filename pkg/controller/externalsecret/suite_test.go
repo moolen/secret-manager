@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	smmeta "github.com/itscontained/secret-manager/pkg/apis/meta/v1"
 	sm1valpha1 "github.com/itscontained/secret-manager/pkg/apis/secretmanager/v1alpha1"
@@ -73,8 +74,10 @@ var _ = BeforeSuite(func(done Done) {
 	err = smmeta.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	t := time.Second
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme: scheme.Scheme,
+		SyncPeriod: &t,
+		Scheme:     scheme.Scheme,
 	})
 	Expect(err).ToNot(HaveOccurred())
 
@@ -87,6 +90,7 @@ var _ = BeforeSuite(func(done Done) {
 	storeFactory = fakestore.New()
 	err = (&ExternalSecretReconciler{
 		Client:       k8sClient,
+		Reader:       k8sClient,
 		Scheme:       k8sManager.GetScheme(),
 		Log:          ctrl.Log.WithName("controllers").WithName("ExternalSecrets"),
 		storeFactory: storeFactory,

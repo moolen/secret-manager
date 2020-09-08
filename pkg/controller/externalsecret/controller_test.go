@@ -163,7 +163,7 @@ var _ = Describe("ExternalSecrets Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 		})
 
-		It("An ExternalSecret with a valid SecretStore should generate a Secret", func() {
+		It("An ExternalSecret with a valid SecretStore should refresh a Secret", func() {
 			store := sampleStore.DeepCopy()
 			By("Creating the SecretStore successfully")
 			Expect(k8sClient.Create(context.Background(), store)).Should(Succeed())
@@ -176,6 +176,7 @@ var _ = Describe("ExternalSecrets Controller", func() {
 					Name: store.Name,
 					Kind: smv1alpha1.SecretStoreKind,
 				},
+				RefreshInterval: &metav1.Duration{Duration: time.Second},
 				Data: []smv1alpha1.KeyReference{
 					{
 						SecretKey: "key",
@@ -230,6 +231,134 @@ var _ = Describe("ExternalSecrets Controller", func() {
 				Expect(k8sClient.Get(context.Background(), key, fetchedSecret)).Should(Succeed())
 				return matches(string(fetchedSecret.Data["key"]), string(expectedData["key"]))
 			}, timeout, interval).Should(BeTrue(), "The generated secret should be created")
+
+			Expect(len(fetchedSecret.OwnerReferences)).Should(BeIdenticalTo(1),
+				"The owner reference of the secret should be set")
+			Expect(fetchedSecret.OwnerReferences[0].Kind).Should(BeIdenticalTo(smv1alpha1.ExtSecretKind),
+				"The owner kind should be ExternalSecret")
+			Expect(fetchedSecret.OwnerReferences[0].Name).Should(BeIdenticalTo(toCreate.Name),
+				"The owner name should be the name of the ExternalSecret")
+
+			By("Checking the Secret content")
+			Expect(fetchedSecret.Data).Should(Equal(expectedData), "Secret data should match test data")
+
+			// prep data for next iteration
+			testSecretData = []byte("new-secret")
+			expectedData = map[string][]byte{
+				"key": []byte(base64.RawStdEncoding.EncodeToString(testSecretData)),
+			}
+			By("Changing the secret in the storeFactory")
+			storeFactory.WithGetSecret(testSecretData, nil)
+
+			fetchedSecret = &corev1.Secret{}
+			Eventually(func() bool {
+				By("Fetching the Secret successfully")
+				Expect(k8sClient.Get(context.Background(), key, fetchedSecret)).Should(Succeed())
+				By("Checking the Secret content")
+				return matches(string(fetchedSecret.Data["key"]), string(expectedData["key"]))
+			}, timeout, interval).Should(BeTrue(), "The generated secret should be updated")
+
+			Expect(len(fetchedSecret.OwnerReferences)).Should(BeIdenticalTo(1),
+				"The owner reference of the secret should be set")
+			Expect(fetchedSecret.OwnerReferences[0].Kind).Should(BeIdenticalTo(smv1alpha1.ExtSecretKind),
+				"The owner kind should be ExternalSecret")
+			Expect(fetchedSecret.OwnerReferences[0].Name).Should(BeIdenticalTo(toCreate.Name),
+				"The owner name should be the name of the ExternalSecret")
+		})
+
+		It("An ExternalSecret should refresh a Secret exactly once", func() {
+			store := sampleStore.DeepCopy()
+			By("Creating the SecretStore successfully")
+			Expect(k8sClient.Create(context.Background(), store)).Should(Succeed())
+			defer func() {
+				By("Deleting the SecretStore successfully")
+				Expect(k8sClient.Delete(context.Background(), store)).Should(Succeed())
+			}()
+			spec := smv1alpha1.ExternalSecretSpec{
+				StoreRef: smv1alpha1.ObjectReference{
+					Name: store.Name,
+					Kind: smv1alpha1.SecretStoreKind,
+				},
+				RefreshInterval: &metav1.Duration{Duration: time.Duration(0)},
+				Data: []smv1alpha1.KeyReference{
+					{
+						SecretKey: "key",
+						RemoteRef: smv1alpha1.RemoteReference{
+							Name:     smmeta.String("secret/data/foo"),
+							Property: smmeta.String("key"),
+						},
+					},
+				},
+			}
+
+			key := types.NamespacedName{
+				Name:      secretType.Name,
+				Namespace: secretType.Namespace,
+			}
+
+			toCreate := &smv1alpha1.ExternalSecret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      key.Name,
+					Namespace: key.Namespace,
+				},
+				Spec: spec,
+			}
+
+			testSecretData := []byte("this-is-a-secret")
+			expectedData := map[string][]byte{
+				"key": base64Encode(testSecretData),
+			}
+			storeFactory.WithGetSecret(testSecretData, nil)
+			storeFactory.WithNew(func(context.Context, client.Client, smv1alpha1.GenericStore, string) (*fakestore.Factory, error) {
+				return storeFactory, nil
+			})
+
+			By("Creating the ExternalSecret successfully")
+			Expect(k8sClient.Create(context.Background(), toCreate)).Should(Succeed())
+			defer func() {
+				By("Deleting the ExternalSecret successfully")
+				Expect(k8sClient.Delete(context.Background(), toCreate)).Should(Succeed())
+			}()
+			fetched := &smv1alpha1.ExternalSecret{}
+			Eventually(func() bool {
+				By("Fetching the ExternalSecret successfully")
+				Expect(k8sClient.Get(context.Background(), key, fetched)).Should(Succeed())
+				By("Checking the status condition")
+				fetchedCond := fetched.Status.GetCondition(smmeta.TypeReady)
+				return fetchedCond.Matches(smmeta.Available())
+			}, timeout, interval).Should(BeTrue(), "The ExternalSecret should have a ready condition")
+
+			fetchedSecret := &corev1.Secret{}
+			Eventually(func() bool {
+				By("Fetching the Secret successfully")
+				Expect(k8sClient.Get(context.Background(), key, fetchedSecret)).Should(Succeed())
+				return matches(string(fetchedSecret.Data["key"]), string(expectedData["key"]))
+			}, timeout, interval).Should(BeTrue(), "The generated secret should be created")
+
+			Expect(len(fetchedSecret.OwnerReferences)).Should(BeIdenticalTo(1),
+				"The owner reference of the secret should be set")
+			Expect(fetchedSecret.OwnerReferences[0].Kind).Should(BeIdenticalTo(smv1alpha1.ExtSecretKind),
+				"The owner kind should be ExternalSecret")
+			Expect(fetchedSecret.OwnerReferences[0].Name).Should(BeIdenticalTo(toCreate.Name),
+				"The owner name should be the name of the ExternalSecret")
+
+			By("Checking the Secret content")
+			Expect(fetchedSecret.Data).Should(Equal(expectedData), "Secret data should match test data")
+			Expect(toCreate.Status.NextSync.IsZero()).To(BeTrue())
+
+			// this should not be synced!
+			testSecretData = []byte("new-secret")
+			By("Changing the secret in the storeFactory")
+			storeFactory.WithGetSecret(testSecretData, nil)
+
+			time.Sleep(time.Second * 2)
+			fetchedSecret = &corev1.Secret{}
+			Eventually(func() bool {
+				By("Fetching the Secret successfully")
+				Expect(k8sClient.Get(context.Background(), key, fetchedSecret)).Should(Succeed())
+				By("Checking the Secret content")
+				return matches(string(fetchedSecret.Data["key"]), string(fetchedSecret.Data["key"]))
+			}, timeout, interval).Should(BeTrue(), "The generated secret should NOT be updated")
 
 			Expect(len(fetchedSecret.OwnerReferences)).Should(BeIdenticalTo(1),
 				"The owner reference of the secret should be set")

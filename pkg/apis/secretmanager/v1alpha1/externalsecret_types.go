@@ -31,6 +31,15 @@ type ExternalSecretSpec struct {
 	// The 'name' field in this stanza is required at all times.
 	StoreRef ObjectReference `json:"storeRef"`
 
+	// The duration before secret-manager renews the values of
+	// of the ExternalSecret. If not set, the secret will only be synced when
+	// the controller starts up. If set to 0 it will be synced exactly once even when controller restarts.
+	// defaults to 90s and must be gte 60s
+	// +kubebuilder:validation:Format=duration
+	// +kubebuilder:default="90s"
+	// +optional
+	RefreshInterval *metav1.Duration `json:"RefreshInterval,omitempty"`
+
 	// Template which will be deep merged into the generated secret.
 	// Can be used to set for example annotations or type on the generated secret.
 	// +kubebuilder:validation:Type=object
@@ -92,6 +101,12 @@ type ExternalSecretStatus struct {
 	// List of status conditions to indicate the status of ExternalSecret.
 	// Known condition types are `Ready`.
 	smmeta.ConditionedStatus `json:",inline"`
+
+	// NextSync is the time at which the secret values will be next
+	// renewed.
+	// If not set, no upcoming renewal is scheduled.
+	// +optional
+	NextSync *metav1.Time `json:"nextSync,omitempty"`
 }
 
 // +kubebuilder:object:root=true
