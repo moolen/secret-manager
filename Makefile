@@ -66,14 +66,14 @@ manifests: controller-gen ## Generate CRD manifests
 generate: controller-gen ## Generate CRD code
 	$(CONTROLLER_GEN) object:headerFile="build/boilerplate.go.txt" paths="./pkg/apis/..."
 
-docker-build: manifests generate test ## Build the docker image
-	docker build . -t $(IMG) --load
+docker-build: manifests generate ## Build the docker image
+	docker build . -t $(IMG)
 
 crds-to-chart: ## copy crds to helm chart directory
-	cp deploy/crds/*.yaml $(HELM_DIR)/templates/crds/; \
-	for i in deploy/charts/secret-manager/templates/crds/*.yaml; do \
+	cp deploy/crds/*.yaml $(HELM_DIR)/crds/; \
+	for i in deploy/charts/secret-manager/crds/*.yaml; do \
 		sed -i '1s/.*/{{- if .Values.installCRDs }}/;$$a{{- end }}' $$i; \
-    done
+	done
 
 docker-build-kind-deploy: docker-build crds-to-chart ## copy
 	kind load docker-image ${IMG} --name test
