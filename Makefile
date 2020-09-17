@@ -54,7 +54,7 @@ lint: lint/check ## run golangci-lint
 	fi
 
 test: ## Run tests
-	go test -v -race ./... -coverprofile cover.out
+	go test -v -race $$(go list ./... | grep -v e2e) -coverprofile cover.out
 
 build: generate ## Build manager binary
 	CGO_ENABLED=0 go build -a -ldflags '$(LDFLAGS)' -o bin/manager ./cmd/controller/main.go
@@ -89,6 +89,9 @@ docker-push: ## Push the docker image
 helm-docs: ## Generate helm docs
 	cd $(HELM_DIR); \
 	docker run --rm -v $(shell pwd)/$(HELM_DIR):/helm-docs -u $(shell id -u) jnorwood/helm-docs:latest
+
+e2e: generate manifests
+	$(MAKE) -C e2e test
 
 # find or download controller-gen
 # download controller-gen if necessary
